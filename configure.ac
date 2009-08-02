@@ -53,6 +53,8 @@ PKG_CHECK_MODULES([rsvg], [librsvg-2.0 >= 2.26.0],,
 		  AC_MSG_ERROR([emily requires librsvg-0.23 or newer]))
 PKG_CHECK_MODULES([gtk], [gtk+-2.0 >= 2.16.4],,
 		  AC_MSG_ERROR([emily requires gtk+-2.18.0 or newer]))
+PKG_CHECK_MODULES([lua], [lua >= 5.1],,
+				  [AC_MSG_ERROR([emily requires lua-5.1 or newer])])
 dnl }}}
 
 dnl {{{ Extra CFLAGS

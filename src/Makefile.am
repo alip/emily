@@ -1,5 +1,5 @@
-AM_CFLAGS= $(cairo_CFLAGS) $(rsvg_CFLAGS) $(gtk_CFLAGS) \
+AM_CFLAGS= $(cairo_CFLAGS) $(rsvg_CFLAGS) $(gtk_CFLAGS) $(lua_CFLAGS) \
 	   @EMILY_CFLAGS@ -DPKGDATADIR=\"$(pkgdatadir)\" -DGITHEAD=\"$(GITHEAD)\"
 bin_PROGRAMS= emily
 emily_SOURCES= main.c
-emily_LDADD= $(cairo_LIBS) $(rsvg_LIBS) $(gtk_LIBS)
+emily_LDADD= $(cairo_LIBS) $(rsvg_LIBS) $(gtk_LIBS) $(lua_LIBS)
