@@ -52,6 +52,7 @@ static struct _globalconf {
     gint piece_dimension;
     gint board_margin;
     gchar *theme;
+    const gchar *fen;
 
     /* Variables */
     gint flip;
@@ -110,6 +111,73 @@ static void cleanup(void)
     g_free(globalconf.theme);
     lua_close(globalconf.state);
     cairo_destroy(globalconf.board_renderer);
+}
+
+#if 0
+static void dumpstack(lua_State *L)
+{
+    fprintf(stderr, "-------- Lua stack dump ---------\n");
+    for(int i = lua_gettop(L); i; i--)
+    {
+        int t = lua_type(L, i);
+        switch (t)
+        {
+          case LUA_TSTRING:
+            fprintf(stderr, "%d: string: `%s'\n", i, lua_tostring(L, i));
+            break;
+          case LUA_TBOOLEAN:
+            fprintf(stderr, "%d: bool:   %s\n", i, lua_toboolean(L, i) ? "true" : "false");
+            break;
+          case LUA_TNUMBER:
+            fprintf(stderr, "%d: number: %g\n", i, lua_tonumber(L, i));
+            break;
+          case LUA_TNIL:
+            fprintf(stderr, "%d: nil\n", i);
+            break;
+          default:
+            fprintf(stderr, "%d: %s\t#%d\t%p\n", i, lua_typename(L, t),
+                    (int) lua_objlen(L, i),
+                    lua_topointer(L, i));
+            break;
+        }
+    }
+    fprintf(stderr, "------- Lua stack dump end ------\n");
+}
+#endif
+
+static void init_lua(void)
+{
+    const char *init;
+
+    /* Open Lua */
+    globalconf.state = lua_open();
+    luaL_openlibs(globalconf.state);
+
+    /* Read EMILY_INIT */
+    init = g_getenv(ENV_INIT);
+    if (NULL != init) {
+        if ('@' == init[0]) {
+            ++init;
+            if (0 != luaL_dofile(globalconf.state, init)) {
+                lg("Error running init script `%s': %s", init, lua_tostring(globalconf.state, -1));
+                lua_pop(globalconf.state, 1);
+            }
+        }
+        else if (0 != luaL_dostring(globalconf.state, init)) {
+            lg("Error running init code from `" ENV_INIT "': %s", lua_tostring(globalconf.state, -1));
+            lua_pop(globalconf.state, 1);
+        }
+    }
+
+    /* require "chess" */
+    lua_getglobal(globalconf.state, "require");
+    lua_pushliteral(globalconf.state, "chess");
+    if (0 != lua_pcall(globalconf.state, 1, 2, 0)) {
+        lg("Error loading LuaChess: %s", lua_tostring(globalconf.state, 1));
+        cleanup();
+        exit(EXIT_FAILURE);
+    }
+    lua_pop(globalconf.state, 2);
 }
 
 static gboolean set_piece_from_svg(int square, int colour, int piece, GError **load_error)
@@ -200,6 +268,60 @@ static void xset_piece_from_svg(int square, int colour, int piece)
     }
 }
 
+static void load_fen(void)
+{
+    int rank, file;
+    int sq;
+    int piece, side;
+
+    /* board = chess.Board{} */
+    lua_getglobal(globalconf.state, "chess");
+    lua_getfield(globalconf.state, -1, "Board");
+    lua_newtable(globalconf.state);
+    if (0 != lua_pcall(globalconf.state, 1, LUA_MULTRET, 0)) {
+        lg("Error creating chess.Board instance: %s", lua_tostring(globalconf.state, 2));
+        cleanup();
+        exit(EXIT_FAILURE);
+    }
+
+    /* board:loadfen(globalconf.fen) */
+    lua_getfield(globalconf.state, -1, "loadfen");
+    lua_pushvalue(globalconf.state, -2);
+    lua_pushstring(globalconf.state, globalconf.fen);
+    if (0 != lua_pcall(globalconf.state, 2, LUA_MULTRET, 0)) {
+        lg("Error loading FEN: %s", lua_tostring(globalconf.state, -1));
+        cleanup();
+        exit(EXIT_FAILURE);
+    }
+
+    for (rank = 0; rank < 8; rank++) {
+        for (file = 0; file < 8; file++) {
+            sq = (rank << 3) + (file % -9);
+
+            /* piece, side = assert(board:get_piece(sq), "error getting piece") */
+            lua_getfield(globalconf.state, -1, "get_piece");
+            lua_pushvalue(globalconf.state, -2);
+            lua_pushinteger(globalconf.state, sq);
+            if (0 != lua_pcall(globalconf.state, 2, LUA_MULTRET, 0)) {
+                lg("Error getting piece: %s", lua_tostring(globalconf.state, -1));
+                cleanup();
+                exit(EXIT_FAILURE);
+            }
+            if (LUA_TNIL == lua_type(globalconf.state, -1)) {
+                /* No piece on this square */
+                lgv("No piece on square %d", sq);
+                lua_pop(globalconf.state, 1);
+                continue;
+            }
+            side = lua_tointeger(globalconf.state, -1);
+            piece = lua_tointeger(globalconf.state, -2);
+            lua_pop(globalconf.state, 2);
+            lgv("Placing piece %d of side %d on square %d", piece, side, sq);
+            xset_piece_from_svg(sq, side, piece);
+        }
+    }
+}
+
 static void on_destroy(GtkWidget *widget G_GNUC_UNUSED, gpointer data G_GNUC_UNUSED)
 {
     gtk_main_quit();
@@ -207,7 +329,7 @@ static void on_destroy(GtkWidget *widget G_GNUC_UNUSED, gpointer data G_GNUC_UNU
 
 static gboolean on_expose_event(GtkWidget *widget, GdkEventExpose *event G_GNUC_UNUSED, gpointer data G_GNUC_UNUSED)
 {
-    int x, y, sq;
+    int x, y;
 
     globalconf.board_renderer = gdk_cairo_create(widget->window);
 
@@ -230,28 +352,8 @@ static gboolean on_expose_event(GtkWidget *widget, GdkEventExpose *event G_GNUC_
         }
     }
 
-    /* Place pieces */
-    for (sq = 8; sq < 16; sq++)
-        xset_piece_from_svg(sq, WHITE, PAWN);
-    for (sq = 48; sq < 56; sq++)
-        xset_piece_from_svg(sq, BLACK, PAWN);
-    for (sq = 0; sq < 8; sq += 7)
-        xset_piece_from_svg(sq, WHITE, ROOK);
-    for (sq = 56; sq < 64; sq += 7)
-        xset_piece_from_svg(sq, BLACK, ROOK);
-    for (sq = 1; sq < 7; sq += 5)
-        xset_piece_from_svg(sq, WHITE, KNIGHT);
-    for (sq = 57; sq < 63; sq += 5)
-        xset_piece_from_svg(sq, BLACK, KNIGHT);
-    for (sq = 2; sq < 6; sq += 3)
-        xset_piece_from_svg(sq, WHITE, BISHOP);
-    for (sq = 58; sq < 62; sq += 3)
-        xset_piece_from_svg(sq, BLACK, BISHOP);
-    xset_piece_from_svg(3, WHITE, QUEEN);
-    xset_piece_from_svg(4, WHITE, KING);
-    xset_piece_from_svg(59, BLACK, QUEEN);
-    xset_piece_from_svg(60, BLACK, KING);
-
+    /* Load FEN position */
+    load_fen();
     return FALSE;
 }
 
@@ -306,41 +408,6 @@ static void show_widgets(void)
     gtk_widget_show(globalconf.main_widget);
 }
 
-static void init_lua(void)
-{
-    const char *init;
-
-    /* Open Lua */
-    globalconf.state = lua_open();
-    luaL_openlibs(globalconf.state);
-
-    /* Read EMILY_INIT */
-    init = g_getenv(ENV_INIT);
-    if (NULL != init) {
-        if ('@' == init[0]) {
-            ++init;
-            if (0 != luaL_dofile(globalconf.state, init)) {
-                lg("Error running init script `%s': %s", init, lua_tostring(globalconf.state, -1));
-                lua_pop(globalconf.state, 1);
-            }
-        }
-        else if (0 != luaL_dostring(globalconf.state, init)) {
-            lg("Error running init code from `" ENV_INIT "': %s", lua_tostring(globalconf.state, -1));
-            lua_pop(globalconf.state, 1);
-        }
-    }
-
-    /* require "chess" */
-    lua_getglobal(globalconf.state, "require");
-    lua_pushliteral(globalconf.state, "chess");
-    if (0 != lua_pcall(globalconf.state, 1, 2, 0)) {
-        lg("Error loading LuaChess: %s", lua_tostring(globalconf.state, 1));
-        cleanup();
-        exit(EXIT_FAILURE);
-    }
-    lua_pop(globalconf.state, 2);
-}
-
 int main(int argc, char **argv)
 {
     gchar *svg_subdir;
@@ -358,7 +425,7 @@ int main(int argc, char **argv)
     globalconf.flip = 0;
 
     /* Parse arguments */
-    context = g_option_context_new("");
+    context = g_option_context_new("FEN");
     g_option_context_set_summary(context, PACKAGE "-" VERSION " - the trippy chess interface");
     g_option_context_add_main_entries(context, entries, PACKAGE);
     g_option_context_add_group(context, gtk_get_option_group(TRUE));
@@ -375,6 +442,12 @@ int main(int argc, char **argv)
         about();
         return EXIT_SUCCESS;
     }
+
+    if (2 > argc) {
+        lg("No FEN given!");
+        return EXIT_FAILURE;
+    }
+    globalconf.fen = argv[1];
 
     if (NULL == globalconf.theme) {
         svg_subdir = g_strdup_printf("svg" G_DIR_SEPARATOR_S "%d", globalconf.piece_dimension);
