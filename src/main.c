@@ -24,18 +24,18 @@
 #define MAIN_WIDGET_TITLE   "Emily - the trippy chess interface"
 
 /* Colours */
-#define WHITE       0
-#define BLACK       1
-#define MAX_COLOUR  2
+#define WHITE       1
+#define BLACK       2
+#define MAX_COLOUR  3
 
 /* Pieces */
-#define PAWN        0
-#define KNIGHT      1
-#define BISHOP      2
-#define ROOK        3
-#define QUEEN       4
-#define KING        5
-#define MAX_PIECE   6
+#define PAWN        1
+#define KNIGHT      2
+#define BISHOP      3
+#define ROOK        4
+#define QUEEN       5
+#define KING        6
+#define MAX_PIECE   7
 
 #define BRANK(sq)    ((sq) >> 3)
 #define BFILE(sq)    ((sq) & 7)
