@@ -15,12 +15,17 @@
 #include <librsvg/rsvg.h>
 #include <librsvg/rsvg-cairo.h>
 
+#include <lua.h>
+#include <lauxlib.h>
+#include <lualib.h>
+
 #ifdef HAVE_CONFIG_H
 #include "config.h"
 #else
 #define PACKAGE "emily"
 #endif /* HAVE_CONFIG_H */
 
+#define ENV_INIT            "EMILY_INIT"
 #define MAIN_WIDGET_TITLE   "Emily - the trippy chess interface"
 
 /* Colours */
@@ -50,6 +55,7 @@ static struct _globalconf {
 
     /* Variables */
     gint flip;
+    lua_State *state;
     cairo_t *board_renderer;
     GtkWidget *main_widget;
     GtkWidget *main_vbox;
@@ -102,6 +108,7 @@ static void about(void)
 static void cleanup(void)
 {
     g_free(globalconf.theme);
+    lua_close(globalconf.state);
     cairo_destroy(globalconf.board_renderer);
 }
 
@@ -299,6 +306,41 @@ static void show_widgets(void)
     gtk_widget_show(globalconf.main_widget);
 }
 
+static void init_lua(void)
+{
+    const char *init;
+
+    /* Open Lua */
+    globalconf.state = lua_open();
+    luaL_openlibs(globalconf.state);
+
+    /* Read EMILY_INIT */
+    init = g_getenv(ENV_INIT);
+    if (NULL != init) {
+        if ('@' == init[0]) {
+            ++init;
+            if (0 != luaL_dofile(globalconf.state, init)) {
+                lg("Error running init script `%s': %s", init, lua_tostring(globalconf.state, -1));
+                lua_pop(globalconf.state, 1);
+            }
+        }
+        else if (0 != luaL_dostring(globalconf.state, init)) {
+            lg("Error running init code from `" ENV_INIT "': %s", lua_tostring(globalconf.state, -1));
+            lua_pop(globalconf.state, 1);
+        }
+    }
+
+    /* require "chess" */
+    lua_getglobal(globalconf.state, "require");
+    lua_pushliteral(globalconf.state, "chess");
+    if (0 != lua_pcall(globalconf.state, 1, 2, 0)) {
+        lg("Error loading LuaChess: %s", lua_tostring(globalconf.state, 1));
+        cleanup();
+        exit(EXIT_FAILURE);
+    }
+    lua_pop(globalconf.state, 2);
+}
+
 int main(int argc, char **argv)
 {
     gchar *svg_subdir;
@@ -339,6 +381,8 @@ int main(int argc, char **argv)
         globalconf.theme = g_build_filename(PKGDATADIR, svg_subdir, NULL);
         g_free(svg_subdir);
     }
+
+    init_lua();
 
     create_main_widget();
     create_main_vbox();
