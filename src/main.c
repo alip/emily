@@ -51,7 +51,7 @@ static struct _globalconf {
     gint print_version;
     gint piece_dimension;
     gint board_margin;
-    gchar *theme;
+    gchar *pieceset;
     const gchar *fen;
 
     /* Variables */
@@ -71,9 +71,6 @@ static struct _globalconf {
 const GOptionEntry entries[] = {
     { "verbose",    'v', 0, G_OPTION_ARG_NONE, &globalconf.verbose, "Be verbose", NULL },
     { "version",    'V', 0, G_OPTION_ARG_NONE, &globalconf.print_version, "Print version and exit", NULL },
-    { "set",        's', 0, G_OPTION_ARG_STRING, &globalconf.theme, "Path to the piece set", NULL },
-    { "dimension",  'd', 0, G_OPTION_ARG_INT, &globalconf.piece_dimension, "Piece dimension", NULL },
-    { "margin",     'm', 0, G_OPTION_ARG_INT, &globalconf.board_margin, "Board margin", NULL },
     { NULL,          0,  0, 0, NULL, NULL, NULL},
 };
 
@@ -108,7 +105,7 @@ static void about(void)
 
 static void cleanup(void)
 {
-    g_free(globalconf.theme);
+    g_free(globalconf.pieceset);
     lua_close(globalconf.state);
     cairo_destroy(globalconf.board_renderer);
 }
@@ -178,6 +175,40 @@ static void init_lua(void)
         exit(EXIT_FAILURE);
     }
     lua_pop(globalconf.state, 2);
+
+    /* set defaults */
+    globalconf.board_margin = 2;
+    globalconf.piece_dimension = 45;
+
+    /* load configuration from config table */
+    lua_getglobal(globalconf.state, "config");
+    if (LUA_TTABLE == lua_type(globalconf.state, -1)) {
+        /* globalconf.board_margin = config.board_margin */
+        lua_getfield(globalconf.state, -1, "board_margin");
+        if (LUA_TNUMBER == lua_type(globalconf.state, -1))
+            globalconf.board_margin = lua_tonumber(globalconf.state, -1);
+        lua_pop(globalconf.state, 1);
+
+        /* globalconf.piece_dimension = config.piece_dimension */
+        lua_getfield(globalconf.state, -1, "piece_dimension");
+        if (LUA_TNUMBER == lua_type(globalconf.state, -1))
+            globalconf.piece_dimension = lua_tonumber(globalconf.state, -1);
+        lua_pop(globalconf.state, 1);
+
+        /* globalconf.flip = config.flip */
+        lua_getfield(globalconf.state, -1, "flip");
+        globalconf.flip = lua_toboolean(globalconf.state, -1);
+        lua_pop(globalconf.state, 1);
+
+        /* globalconf.pieceset = config.pieceset */
+        lua_getfield(globalconf.state, -1, "pieceset");
+        if (LUA_TSTRING == lua_type(globalconf.state, -1))
+            globalconf.pieceset = g_strdup(lua_tostring(globalconf.state, -1));
+        lua_pop(globalconf.state, 1);
+    }
+
+    if (NULL == globalconf.pieceset)
+        globalconf.pieceset = g_build_filename(PKGDATADIR, "svg", NULL);
 }
 
 static gboolean set_piece_from_svg(int square, int colour, int piece, GError **load_error)
@@ -187,7 +218,7 @@ static gboolean set_piece_from_svg(int square, int colour, int piece, GError **l
     GString *piece_path;
     RsvgHandle *handle;
 
-    piece_path = g_string_new(globalconf.theme);
+    piece_path = g_string_new(globalconf.pieceset);
     g_string_append_printf(piece_path,
             G_DIR_SEPARATOR_S "%d" G_DIR_SEPARATOR_S "%c", globalconf.piece_dimension,
             (WHITE == colour) ? 'w' : 'b');
@@ -410,19 +441,10 @@ static void show_widgets(void)
 
 int main(int argc, char **argv)
 {
-    gchar *svg_subdir;
     GOptionContext *context;
     GError *parse_error = NULL;
 
     memset(&globalconf, 0, sizeof(struct _globalconf));
-
-    /* Set defaults */
-    globalconf.verbose = 0;
-    globalconf.print_version = 0;
-    globalconf.piece_dimension = 45;
-    globalconf.board_margin = 2;
-    globalconf.theme = NULL;
-    globalconf.flip = 0;
 
     /* Parse arguments */
     context = g_option_context_new("FEN");
@@ -430,7 +452,7 @@ int main(int argc, char **argv)
     g_option_context_add_main_entries(context, entries, PACKAGE);
     g_option_context_add_group(context, gtk_get_option_group(TRUE));
 
-    if (!g_option_context_parse(context, &argc, &argv, NULL)) {
+    if (!g_option_context_parse(context, &argc, &argv, &parse_error)) {
         g_printerr("option parsing failed: %s\n", parse_error->message);
         g_error_free(parse_error);
         g_option_context_free(context);
@@ -448,12 +470,6 @@ int main(int argc, char **argv)
         return EXIT_FAILURE;
     }
     globalconf.fen = argv[1];
-
-    if (NULL == globalconf.theme) {
-        svg_subdir = g_strdup_printf("svg" G_DIR_SEPARATOR_S "%d", globalconf.piece_dimension);
-        globalconf.theme = g_build_filename(PKGDATADIR, svg_subdir, NULL);
-        g_free(svg_subdir);
-    }
 
     init_lua();
 
