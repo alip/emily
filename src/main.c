@@ -142,6 +142,21 @@ static void dumpstack(lua_State *L)
 }
 #endif
 
+static int csquare(int x, int y)
+{
+    int rank, file;
+    int invert[] = {7, 6, 5, 4, 3, 2, 1, 0};
+
+    if (x > globalconf.board_margin)
+        x -= globalconf.board_margin;
+    if (y > globalconf.board_margin)
+        y -= globalconf.board_margin;
+
+    rank = invert[y / globalconf.piece_dimension];
+    file = x / globalconf.piece_dimension;
+    return (rank << 3) + (file % -9);
+}
+
 static void init_lua(void)
 {
     const char *init;
@@ -388,6 +403,36 @@ static gboolean on_expose_event(GtkWidget *widget, GdkEventExpose *event G_GNUC_
     return FALSE;
 }
 
+static gboolean on_motion_notify(GtkWidget *widget G_GNUC_UNUSED, GdkEventMotion *event, gpointer data G_GNUC_UNUSED)
+{
+    int square;
+
+    square = csquare(event->x, event->y);
+    lg("Motion notify event on square: %d", square);
+
+    return FALSE;
+}
+
+static gboolean on_button_press(GtkWidget *widget G_GNUC_UNUSED, GdkEventButton *event, gpointer data G_GNUC_UNUSED)
+{
+    int square;
+
+    square = csquare(event->x, event->y);
+    lg("Button press event on square: %d", square);
+
+    return FALSE;
+}
+
+static gboolean on_button_release(GtkWidget *widget G_GNUC_UNUSED, GdkEventButton *event, gpointer data G_GNUC_UNUSED)
+{
+    int square;
+
+    square = csquare(event->x, event->y);
+    lg("Button release event on square: %d", square);
+
+    return FALSE;
+}
+
 static void create_main_widget(void)
 {
     /* Create the widget and set properties */
@@ -411,9 +456,15 @@ static void create_board_widget(void)
     /* Create the widget and set properties */
     globalconf.board_widget = gtk_drawing_area_new();
     gtk_widget_set_size_request(globalconf.board_widget, BOARD_WIDTH(), BOARD_HEIGHT());
+    gtk_widget_add_events(globalconf.board_widget,
+            GDK_POINTER_MOTION_MASK | GDK_POINTER_MOTION_HINT_MASK |
+            GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK);
 
     /* Add callbacks */
     g_signal_connect(G_OBJECT(globalconf.board_widget), "expose_event", G_CALLBACK(on_expose_event), NULL);
+    g_signal_connect(G_OBJECT(globalconf.board_widget), "motion_notify_event", G_CALLBACK(on_motion_notify), NULL);
+    g_signal_connect(G_OBJECT(globalconf.board_widget), "button_press_event", G_CALLBACK(on_button_press), NULL);
+    g_signal_connect(G_OBJECT(globalconf.board_widget), "button_release_event", G_CALLBACK(on_button_release), NULL);
 
     /* Add the drawing area to main vbox. */
     gtk_box_pack_start(GTK_BOX(globalconf.main_vbox), globalconf.board_widget, TRUE, TRUE, 2);
